@@ -1,0 +1,95 @@
+---
+- name: check OS system
+  win_reg_stat:
+    path: 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion'
+    name: ProductName
+  register: os
+
+- name: check .Net version
+  win_reg_stat:
+    path: 'HKLM:\SOFTWARE\Microsoft\NET Framework Setup\NDP\v4\Full'
+    name: Release
+  register: netinfo
+
+
+- name: Set facts on OS version and if .net exists and the version
+  set_fact:
+    os_version: "{{ os.value }}"
+    net_installed: "{{ netinfo.exists }}"
+    net_version: "{{ netinfo.value }}"
+
+- name: Printout version
+  debug:
+    msg:
+      - "Server is running {{ os_version }}"
+      - "Net is installed = {{ net_installed }}"
+      - "Net version is {{ net_version }}"
+
+- name: Download .netv4.5.2 from Repo
+  win_get_url:
+    url: "https://artrepo.domain.com/artifactory/Engineering/{{ net452 }}"
+    dest: "{{ c_window_temp }}"
+    validate_certs: no
+    force: no
+    timeout: 90
+  when:  net_installed == false or net_installed == true and net_version < '379893'
+
+- name: Unzip .Net Framework v4.5.2 and batch file
+  win_unzip:
+    src: '{{ c_window_temp }}/{{ net452 }}'
+    dest: '{{ c_window_temp}}/netframework'
+    creates: '{{ c_window_temp}}/netframework'
+  when:  net_installed == false or net_installed == true and net_version < '379893'
+
+
+- name: .net v4.5.2 install for Windows 2012 R2
+  win_command: net452install.bat
+  args:
+    chdir: '{{ c_window_temp }}/netframework'
+    creates: c:\temp\net452install.txt
+  vars:
+    ansible_become: yes
+    ansible_become_method: runas
+    ansible_become_user: '{{ env }}\{{ user }}'
+    ansible_become_password: "{{ passwd }}"
+  when:
+    - os_version == 'Windows Server 2012 R2 Standard'
+    - net_installed == false or net_installed == true and net_version < '379893'
+  register: dotnet452
+- debug:
+    var: dotnet452
+    verbosity: 1
+
+- name: Reboot post .net v4.5.2 install
+  win_reboot:
+  when: dotnet452.changed
+  register: reboot
+
+- name: Wait for system to become reachable over WinRM
+  wait_for_connection:
+    delay: 30
+    timeout: 300
+  vars:
+    ansible_connection: winrm
+    ansible_user: '{{ env }}\{{ user }}'
+    ansible_password: "{{ passwd }}"
+    ansible_winrm_transport: ntlm
+    ansible_winrm_server_cert_validation: ignore
+    ansible_become_method: runas
+
+- name: check .Net version
+  win_reg_stat:
+    path: 'HKLM:\SOFTWARE\Microsoft\NET Framework Setup\NDP\v4\Full'
+    name: Release
+  register: netinfo
+
+
+- name: Set facts on OS version and if .net exists and the version
+  set_fact:
+    net_version: "{{ netinfo.value }}"
+
+- name: Delete .net v4.5.2 install log in c:\temp
+  win_file:
+    path: c:\temp\net452install.txt
+    state: absent
+  when: net_version >= '379893'
