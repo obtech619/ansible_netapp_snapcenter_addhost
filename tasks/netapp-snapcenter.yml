@@ -1,0 +1,54 @@
+---
+- name: Check for SnapCenter Service
+  win_service:
+    name: "SnapCenter SMCore Service"
+  register: snapcenter_service_check
+
+- name: Check output of SnapCenter Service
+  debug:
+    msg: "Snap Center exists = {{ snapcenter_service_check.exists }}"
+
+
+- name: Install SnapCenter Agent
+  win_shell: |
+    $password = ConvertTo-SecureString "{{ sc_password }}" -AsPlainText -Force
+    $creds = New-Object System.Management.Automation.PSCredential -ArgumentList ( "{{ sc_username }}", $password)
+    import-module SnapCenter
+    open-SmConnection -SMSbaseUrl $url ñCredential $creds
+    Add-SmHost -Hostname '{{ ansible_hostname }}{{ domain }}' -OSType Windows -RunAsName "{{ sc_creds }}" -port '8145'
+    Install-SmHostPackage -Hostnames '{{ ansible_hostname }}{{ domain }}' -PluginCodes SCW
+        $status = Get-SmJobSummaryReport -Date (Get-Date -Format d) | Select-Object - Last 1
+        Write-Host "Job started at" $status.JobStartDateTime
+        while($status.Status -ne "Completed" -and $status.Status -ne "Failed" -and $status.Status -ne "Warning"){
+        $status = Get-SmJobSummaryReport -Date (Get-Date -Format d) | Select-Object -Last 1
+        Start-Sleep -Seconds 10
+        write-host "Performing job ... still running"
+        }
+        if($status.status -eq "Completed"){
+        Write-Host 'Job complete' `n
+        }
+        elseif($status.Status -eq "Failed"){
+        Write-Host 'Job Failed' `n
+        }
+        elseif($status.Status -eq "Warning"){
+        Write-Host 'Job completed with warning'
+        }
+        else{
+        Write-Host 'Job in unknown state: ' $status.Status
+        }
+        $status = Get-SmJobSummaryReport -Date (Get-Date -Format d) | Select-Object -Last 1
+        Write-Host "Job ended at" $status.JobEndDateTime `n
+  delegate_to: "{{ sc_server }}"
+  vars:
+    ansible_connection: winrm
+    ansible_user: "{{ user }}"
+    ansible_password: "{{ passwd }}"
+    ansible_winrm_transport: ntlm
+    ansible_winrm_server_cert_validation: ignore
+    ansible_port: 5986
+  when: snapcenter_service_check.exists == false
+
+- name: wait for snapcenter service to run before rebooting
+  win_wait_for_process:
+    process_name_exact: 'SMCoreServiceHost'
+    state: present
