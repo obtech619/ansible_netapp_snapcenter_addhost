@@ -1,0 +1,7 @@
+---
+
+- name: Verify if .net v4.5.2 or higher exists on server
+  include_tasks: prerequisites.yml
+
+- name: Install Snapcenter Agent
+  include_tasks: netapp-snapcenter.yml
